@@ -135,6 +135,59 @@ router.get('/byReg/:regNo', async (req, res) => {
     }
 });
 
+// Get pending registration requests (Admin Only)
+router.get('/requests', async (req, res) => {
+    try {
+        const requests = await User.find({ status: 'pending' }).sort({ createdAt: -1 });
+        console.log(`[Server] Found ${requests.length} pending registration requests`);
+        res.json(requests);
+    } catch (err) {
+        console.error('Error in /requests:', err);
+        res.status(500).json({ message: err.message });
+    }
+});
+
+// Submit a registration request
+router.post('/register-request', async (req, res) => {
+    try {
+        const { name, email, registerNumber, department, year, phone, mobile, cgpa, stream, dateOfBirth, gender } = req.body;
+        
+        // Email must be @bitsathy.ac.in
+        if (!email.toLowerCase().endsWith('@bitsathy.ac.in')) {
+            return res.status(400).json({ message: 'Only @bitsathy.ac.in emails are allowed' });
+        }
+
+        // Check if user already exists
+        const existingUser = await User.findOne({ 
+            $or: [{ email: email.toLowerCase() }, { registerNumber }] 
+        });
+        if (existingUser) {
+            return res.status(400).json({ message: 'User with this email or register number already exists' });
+        }
+
+        const newUser = new User({
+            name,
+            email: email.toLowerCase(),
+            registerNumber,
+            department,
+            year,
+            phone: phone || mobile,
+            mobile: mobile || phone,
+            cgpa,
+            stream,
+            dateOfBirth,
+            gender,
+            role: 'student',
+            status: 'pending'
+        });
+
+        await newUser.save();
+        res.status(201).json({ message: 'Registration request submitted successfully. Waiting for admin approval.', user: newUser });
+    } catch (err) {
+        res.status(400).json({ message: err.message });
+    }
+});
+
 // Get a specific user profile
 router.get('/:id', async (req, res) => {
     try {
@@ -409,31 +462,25 @@ router.delete('/:id', verifyToken, isAdmin, async (req, res) => {
     }
 });
 
-// Bulk create users
-router.post('/bulk', async (req, res) => {
+
+// Update user status (Approve/Reject - Admin Only)
+router.patch('/:id/status', verifyToken, isAdmin, async (req, res) => {
     try {
-        const usersData = Array.isArray(req.body) ? req.body : [req.body];
-        const processedUsers = usersData.map(user => ({
-            ...user,
-            password: user.password || '123456',
-            role: user.role || 'student',
-            mobile: user.mobile || user.phone,
-            phone: user.phone || user.mobile,
-            department: user.department || user.dept || 'CSE',
-            year: user.year || user.batch || user.passingYear || '2024',
-            cgpa: user.cgpa ? Number(user.cgpa).toFixed(1) : (user.gpa ? Number(user.gpa).toFixed(1) : '0.0'),
-            stream: user.stream || 'B.E',
-            gender: user.gender || 'Male',
-            dateOfBirth: user.dateOfBirth || user.dob,
-            placementStatus: user.placementStatus || 'eligible',
-            placedCompany: user.placedCompany || '',
-            package: user.package || ''
-        }));
-        const users = await User.insertMany(processedUsers);
-        res.status(201).json(users);
+        const { status } = req.body;
+        if (!['active', 'rejected'].includes(status)) {
+            return res.status(400).json({ message: 'Invalid status' });
+        }
+        const user = await User.findByIdAndUpdate(
+            req.params.id,
+            { $set: { status } },
+            { new: true }
+        );
+        if (!user) return res.status(404).json({ message: 'User not found' });
+        res.json({ message: `User status updated to ${status}`, user });
     } catch (err) {
-        res.status(400).json({ message: err.message });
+        res.status(500).json({ message: err.message });
     }
 });
+
 
 module.exports = router;

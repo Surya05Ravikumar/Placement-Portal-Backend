@@ -62,6 +62,11 @@ const userSchema = new mongoose.Schema({
     },
     placedCompany: String,
     package: String,
+    status: { 
+        type: String, 
+        enum: ['active', 'pending', 'rejected'], 
+        default: 'active' 
+    },
     designation: { type: String, default: 'Placement Officer' },
     officeLocation: { type: String, default: 'Admin Block' },
     photo: String, // Base64 or URL
