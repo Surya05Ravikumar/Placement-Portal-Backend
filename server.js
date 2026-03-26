@@ -159,8 +159,9 @@ const PORT = process.env.PORT || 5000;
 mongoose.connect(process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/placement_portal')
     .then(() => {
         console.log("Connected to MongoDB");
-        // Start the HTTP server only if not running in a Vercel/Serverless environment
-        if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
+        // Start the HTTP server only if the file is run directly (local)
+        // Vercel imports the app, so this will be skipped during serverless deployment
+        if (require.main === module) {
             server.listen(PORT, '0.0.0.0', () => console.log(`Server running on port ${PORT}`));
         }
     })
