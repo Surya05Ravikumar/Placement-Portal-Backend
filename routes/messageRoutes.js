@@ -29,9 +29,32 @@ router.get('/conversations/:userId', async (req, res) => {
         // Filter out null/undefined and cast to string
         let contactIds = [...new Set([...senders, ...receivers])].filter(id => id != null).map(String);
 
-        // If student hasn't messaged anyone, supply the placement cell id by default
-        if (contactIds.length === 0 && userId !== 'placement-cell') {
-            contactIds = ['placement-cell'];
+        // RESTRICTION: If the requester is a student, they can ONLY see conversations with admins
+        const requestingUser = await User.findOne({ 
+            $or: [{ _id: userId.length === 24 ? userId : null }, { registerNumber: userRegNo }] 
+        });
+
+        if (requestingUser && requestingUser.role === 'student') {
+            // Filter contactIds to only include admins OR the hardcoded 'placement-cell'
+            const filteredContactIds = [];
+            for (const cId of contactIds) {
+                if (cId === 'placement-cell') {
+                    filteredContactIds.push(cId);
+                    continue;
+                }
+                const contactUser = await User.findOne({ 
+                    $or: [{ _id: cId.length === 24 ? cId : null }, { registerNumber: cId }] 
+                });
+                if (contactUser && contactUser.role === 'admin') {
+                    filteredContactIds.push(cId);
+                }
+            }
+            contactIds = filteredContactIds;
+
+            // If no conversations exist yet, provide 'placement-cell' as default for students
+            if (contactIds.length === 0) {
+                contactIds = ['placement-cell'];
+            }
         }
 
         const conversations = await Promise.all(contactIds.map(async (contactId) => {
@@ -116,7 +139,13 @@ router.get('/unread-count/:userId', async (req, res) => {
 // @desc    Search for users (students) to start a new chat
 router.get('/users', async (req, res) => {
     try {
-        const { search } = req.query;
+        const { search, requesterRole } = req.query;
+        
+        // If requester is a student, they shouldn't be searching for other students
+        if (requesterRole === 'student') {
+            return res.json([]);
+        }
+
         let query = { role: 'student' };
         
         if (search) {
@@ -143,10 +172,23 @@ router.get('/users', async (req, res) => {
 });
 
 // @route   GET /api/messages/:userA/:userB
-// @desc    Get messages between two users
+// @desc    Get messages between two users (with student restriction)
 router.get('/:userA/:userB', async (req, res) => {
     try {
         const { userA, userB } = req.params;
+
+        // Security Check: If one of them is a student, the other MUST be an admin or 'placement-cell'
+        const resolveUser = async (id) => {
+            if (id === 'placement-cell') return { role: 'admin' };
+            return await User.findOne({ $or: [{ _id: id.length === 24 ? id : null }, { registerNumber: id }] });
+        };
+
+        const [uA, uB] = await Promise.all([resolveUser(userA), resolveUser(userB)]);
+        
+        // If both are students, block the request
+        if (uA && uB && uA.role === 'student' && uB.role === 'student') {
+            return res.status(403).json({ message: 'Direct student-to-student messaging is restricted.' });
+        }
         
         // If IDs might be _ids, resolve their registerNumbers for broad matching
         let regA = userA, regB = userB;
@@ -192,10 +234,22 @@ router.get('/:userA/:userB', async (req, res) => {
 });
 
 // @route   POST /api/messages
-// @desc    Send a message
+// @desc    Send a message (with student restriction)
 router.post('/', async (req, res) => {
     try {
         const { sender, receiver, text } = req.body;
+
+        // Security Check: Prevent student-to-student messaging
+        const resolveUser = async (id) => {
+            if (id === 'placement-cell') return { role: 'admin' };
+            return await User.findOne({ $or: [{ _id: id.length === 24 ? id : null }, { registerNumber: id }] });
+        };
+
+        const [uSender, uReceiver] = await Promise.all([resolveUser(sender), resolveUser(receiver)]);
+        if (uSender && uReceiver && uSender.role === 'student' && uReceiver.role === 'student') {
+            return res.status(403).json({ message: 'Communication restricted to Placement Cell only.' });
+        }
+
         const newMessage = new Message({ sender, receiver, text });
         const savedMessage = await newMessage.save();
         res.status(201).json(savedMessage);

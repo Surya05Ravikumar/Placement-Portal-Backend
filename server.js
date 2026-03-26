@@ -23,7 +23,11 @@ app.use(cors());
 
 // Default Route
 app.get('/', (req, res) => {
-    res.send('Placement Portal API Running');
+    res.json({
+        message: 'Placement Portal API is running smoothly!',
+        status: 'Online',
+        timestamp: new Date().toISOString()
+    });
 });
 
 // Import Routes
@@ -106,6 +110,19 @@ io.on('connection', (socket) => {
                 return;
             }
 
+            // Security Check: Prevent student-to-student messaging
+            const User = require('./models/User');
+            const resolveUser = async (id) => {
+                if (id === 'placement-cell') return { role: 'admin' };
+                return await User.findOne({ $or: [{ _id: id.length === 24 ? id : null }, { registerNumber: id }] });
+            };
+
+            const [uSender, uReceiver] = await Promise.all([resolveUser(data.sender), resolveUser(data.receiver)]);
+            if (uSender && uReceiver && uSender.role === 'student' && uReceiver.role === 'student') {
+                console.warn(`[Socket] Blocked unauthorized message from student ${data.sender} to student ${data.receiver}`);
+                return;
+            }
+
             // Save to DB via the Mongoose model
             const Message = require('./models/Message');
             const newMessage = new Message({
@@ -142,7 +159,12 @@ const PORT = process.env.PORT || 5000;
 mongoose.connect(process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/placement_portal')
     .then(() => {
         console.log("Connected to MongoDB");
-        // Start the HTTP server (which includes socket.io) instead of directly app.listen
-        server.listen(PORT, '0.0.0.0', () => console.log(`Server running on port ${PORT}`));
+        // Start the HTTP server only if not running in a Vercel/Serverless environment
+        if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
+            server.listen(PORT, '0.0.0.0', () => console.log(`Server running on port ${PORT}`));
+        }
     })
     .catch(err => console.error(err));
+
+// Export the app for Vercel
+module.exports = app;
